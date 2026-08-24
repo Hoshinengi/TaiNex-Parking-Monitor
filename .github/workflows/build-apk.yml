@@ -1,0 +1,37 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.4"
+          channel: stable
+
+      - name: Install Flet CLI
+        run: pip install flet
+
+      - name: Build APK
+        run: |
+          flet build apk tainex_app.py \
+            --project "TaiNEX Monitor" \
+            --org "com.hoshinengi" \
+            --product "tainex-monitor"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tainex-monitor-apk
+          path: build/apk/*.apk
