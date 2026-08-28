@@ -5,29 +5,26 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  UV_PYTHON: "3.12"
+  PYTHONUTF8: "1"
+  FLET_CLI_NO_RICH_OUTPUT: "1"
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.27.4"
-          channel: stable
-
-      - name: Install Flet CLI
-        run: pip install flet
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
 
       - name: Build APK
-        run: flet build apk --verbose
+        run: uv run flet build apk --yes --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: tainex-monitor-apk
-          path: build/apk/*.apk
+          path: build/apk/
+          if-no-files-found: error
