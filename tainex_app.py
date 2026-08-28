@@ -123,6 +123,12 @@ def is_expo_today(hall: str, events: list[dict]) -> tuple[bool, list[str]]:
     return bool(ongoing), ongoing
 
 
+HALL_LOGOS = {
+    "1館": "https://www.tainex.com.tw/assets/img/legacy/tainex1_logo.jpg",
+    "2館": "https://www.tainex.com.tw/assets/img/legacy/tainex2_logo.jpg",
+}
+
+
 # ── UI 元件 ──────────────────────────────────────────
 def build_parking_card(hall_name: str, parking: dict[str, str], events: list[dict]) -> ft.Card:
     if hall_name not in parking:
@@ -142,7 +148,7 @@ def build_parking_card(hall_name: str, parking: dict[str, str], events: list[dic
         price_unit = "元/小時"
         half_hr = r.get("展覽_半小時", "?")
         daily_max = "依展覽調整"
-        detail = f"超過1小時每半小時 +{half_hr}元"
+        detail = f"超過1小時 每半小時 +{half_hr}元"
         status = f"📌 進行中: {'、'.join(expo_names[:2])}"
     else:
         period = "非展覽期間"
@@ -152,14 +158,15 @@ def build_parking_card(hall_name: str, parking: dict[str, str], events: list[dic
         price_unit = "元/首小時"
         half_hr = r.get("非展覽_半小時", "?")
         daily_max = r.get("非展覽_每日上限", "?") + "元"
-        detail = f"超過1小時每半小時 +{half_hr}元"
+        detail = f"超過1小時 每半小時 +{half_hr}元"
         status = "📌 目前無展覽"
 
     return ft.Card(
         content=ft.Container(
             ft.Column([
                 ft.Row([
-                    ft.Text(f"🏢 {hall_name}", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Image(src=HALL_LOGOS.get(hall_name, ""), width=40, height=40),
+                    ft.Text(hall_name, size=18, weight=ft.FontWeight.BOLD),
                     ft.Container(
                         ft.Text(period, size=12, weight=ft.FontWeight.BOLD, color=badge_text_color),
                         bgcolor=badge_color, border_radius=20, padding=ft.Padding(left=12, top=8, right=12, bottom=8),
