@@ -162,7 +162,7 @@ def build_parking_card(hall_name: str, parking: dict[str, str], events: list[dic
                     ft.Text(f"🏢 {hall_name}", size=18, weight=ft.FontWeight.BOLD),
                     ft.Container(
                         ft.Text(period, size=12, weight=ft.FontWeight.BOLD, color=badge_text_color),
-                        bgcolor=badge_color, border_radius=20, padding=ft.padding.symmetric(8, 12),
+                        bgcolor=badge_color, border_radius=20, padding=ft.Padding(left=12, top=8, right=12, bottom=8),
                     ),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Divider(height=1),
@@ -204,7 +204,7 @@ def build_event_list(events: list[dict]) -> ft.Card:
                 content=ft.Text(str(i + 1), size=12),
                 radius=16,
                 bgcolor=ft.Colors.BLUE_100,
-                foreground_color=ft.Colors.BLUE_700,
+                color=ft.Colors.BLUE_700,
             ),
             title=ft.Text(e["name"], size=14, max_lines=2),
             subtitle=ft.Text(" ｜ ".join(subtitle_parts), size=12, color=ft.Colors.GREY_600),
@@ -243,7 +243,7 @@ def main(page: ft.Page):
         content_col.controls.append(
             ft.Container(
                 ft.Text("正在擷取資料...", text_align=ft.TextAlign.CENTER, color=ft.Colors.GREY_500),
-                alignment=ft.alignment.center, padding=40,
+                alignment=ft.Alignment(0, 0), padding=40,
             )
         )
         page.update()
@@ -285,8 +285,8 @@ def main(page: ft.Page):
 
     page.add(
         progress,
-        ft.Container(timestamp, padding=ft.padding.only(top=8)),
-        ft.Container(content_col, padding=ft.padding.symmetric(horizontal=12), expand=True),
+        ft.Container(timestamp, padding=ft.Padding(top=8)),
+        ft.Container(content_col, padding=ft.Padding(left=12, right=12), expand=True),
     )
 
     do_refresh()
