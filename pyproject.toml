@@ -1,0 +1,18 @@
+[project]
+name = "tainex-monitor"
+version = "0.1.0"
+description = "南港展覽館展覽時程與停車費率查詢"
+
+[tool.flet]
+app.module = "tainex_app"
+product = "TaiNEX Monitor"
+org = "com.hoshinengi"
+
+[tool.flet.app]
+dependencies = ["requests", "beautifulsoup4"]
+
+[tool.flet.android]
+adaptive_icon_background = "#1565C0"
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
