@@ -36,7 +36,8 @@ def fetch_exhibitions() -> list[dict]:
             continue
 
         # 嘗試解析展覽名稱、館別、日期
-        hall_match = re.search(r"([12]館)", text)
+        hall_matches = re.findall(r"([12]館)", text)
+        hall_str = " ".join(sorted(set(hall_matches)))
         date_match = re.search(
             r"(\d{4})\s*(\d{2}/\d{2})\s*\([一二三四五六日]\)\s*[-–]\s*(\d{2}/\d{2})\s*\([一二三四五六日]\)",
             text,
@@ -57,7 +58,7 @@ def fetch_exhibitions() -> list[dict]:
         events.append(
             {
                 "name": name_clean or text[:60],
-                "hall": hall_match.group(1) if hall_match else "",
+                "hall": hall_str,
                 "year": date_match.group(1) if date_match else "",
                 "start": date_match.group(2) if date_match else "",
                 "end": date_match.group(3) if date_match else "",
