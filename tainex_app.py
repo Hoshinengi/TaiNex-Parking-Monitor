@@ -1,9 +1,11 @@
 """南港展覽館展覽時程 & 停車費率 — Flet Android App"""
 
 import calendar
+import json
 import re
 import threading
 from datetime import datetime, date
+from pathlib import Path
 
 import flet as ft
 import requests
@@ -308,7 +310,54 @@ def _day_color(halls: set[str]) -> str | None:
     return None
 
 
-def _build_day_cell(day_num: int, d: date, halls: set[str], is_today: bool) -> ft.Container:
+PARKING_DISCOUNT_LIMIT = 10
+_discount_file: Path | None = None
+
+
+def _get_discount_file() -> Path:
+    """取得停車優惠資料檔路徑，優先使用環境變數指定的 app data 目錄。"""
+    global _discount_file
+    if _discount_file is None:
+        import os
+        # Android 打包後 FLET_APP_STORAGE_DATA 會指向可寫的 app data 目錄
+        app_dir = os.environ.get("FLET_APP_STORAGE_DATA")
+        if app_dir:
+            _discount_file = Path(app_dir) / "parking_discount.json"
+        else:
+            _discount_file = Path(__file__).parent / "parking_discount.json"
+    return _discount_file
+
+
+def _load_all_discounts() -> dict[str, list[str]]:
+    f = _get_discount_file()
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_all_discounts(data: dict[str, list[str]]) -> None:
+    f = _get_discount_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_discount_dates(y: int, m: int) -> set[str]:
+    key = f"{y}_{m:02d}"
+    data = _load_all_discounts()
+    return set(data.get(key, []))
+
+
+def _save_discount_dates(y: int, m: int, dates: set[str]) -> None:
+    key = f"{y}_{m:02d}"
+    data = _load_all_discounts()
+    data[key] = sorted(dates)
+    _save_all_discounts(data)
+
+
+def _build_day_cell(day_num: int, d: date, halls: set[str], is_today: bool, is_discount: bool, on_tap) -> ft.Container:
     """建立單日格子：上方用色條標示館別，下方顯示日期數字。"""
     bars: list[ft.Control] = []
     if "1館" in halls:
@@ -316,22 +365,32 @@ def _build_day_cell(day_num: int, d: date, halls: set[str], is_today: bool) -> f
     if "2館" in halls:
         bars.append(ft.Container(height=5, bgcolor=HALL2_COLOR, border_radius=1))
 
+    # 停車優惠標記：日期下方加圓點
+    day_text = ft.Text(
+        str(day_num), size=12, text_align=ft.TextAlign.CENTER,
+        weight=ft.FontWeight.BOLD if is_today else ft.FontWeight.NORMAL,
+        color=ft.Colors.WHITE if is_today else ft.Colors.GREY_700,
+    )
+    discount_dot = ft.Container(
+        width=6, height=6, border_radius=3,
+        bgcolor=ft.Colors.GREEN_400 if is_discount else None,
+    )
+
     return ft.Container(
         ft.Column([
             ft.Column(bars, spacing=1) if bars else ft.Container(height=5),
-            ft.Text(
-                str(day_num), size=12, text_align=ft.TextAlign.CENTER,
-                weight=ft.FontWeight.BOLD if is_today else ft.FontWeight.NORMAL,
-                color=ft.Colors.WHITE if is_today else ft.Colors.GREY_700,
-            ),
-        ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+            day_text,
+            ft.Row([discount_dot], alignment=ft.MainAxisAlignment.CENTER),
+        ], spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
         bgcolor=ft.Colors.BLUE_700 if is_today else None,
-        border_radius=6, height=36,
+        border_radius=6, height=42,
         alignment=ft.Alignment(0, 0), expand=True,
+        on_click=on_tap,
+        ink=True,
     )
 
 
-def _build_month_grid(y: int, m: int, date_halls: dict, today: date) -> ft.Column:
+def _build_month_grid(y: int, m: int, date_halls: dict, today: date, discount_dates: set[str], on_day_tap) -> ft.Column:
     weekdays = ["一", "二", "三", "四", "五", "六", "日"]
     header = ft.Row(
         [ft.Container(ft.Text(wd, size=11, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER, color=ft.Colors.GREY_600), expand=True) for wd in weekdays],
@@ -343,18 +402,20 @@ def _build_month_grid(y: int, m: int, date_halls: dict, today: date) -> ft.Colum
         cells: list[ft.Control] = []
         for day_num in week:
             if day_num == 0:
-                cells.append(ft.Container(expand=True, height=36))
+                cells.append(ft.Container(expand=True, height=42))
             else:
                 d = date(y, m, day_num)
                 halls = date_halls.get(d, set())
                 is_today = d == today
-                cells.append(_build_day_cell(day_num, d, halls, is_today))
+                d_str = d.isoformat()
+                is_discount = d_str in discount_dates
+                cells.append(_build_day_cell(day_num, d, halls, is_today, is_discount, lambda e, ds=d_str: on_day_tap(ds)))
         day_rows.append(ft.Row(cells, spacing=2))
     return ft.Column([header, *day_rows], spacing=4)
 
 
 def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
-    """建立可切換的雙月行事曆，標記展覽日期。"""
+    """建立可切換的雙月行事曆，標記展覽日期與停車優惠使用。"""
     today = date.today()
     date_halls = _parse_event_dates_safe(events)
     current_offset = [0]
@@ -364,6 +425,7 @@ def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
     month2_title = ft.Text("", size=14, weight=ft.FontWeight.BOLD)
     month1_grid = ft.Column()
     month2_grid = ft.Column()
+    discount_counter = ft.Text("", size=13, weight=ft.FontWeight.BOLD)
 
     def _offset_month(base_month, base_year, offset):
         m = base_month + offset
@@ -376,6 +438,30 @@ def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
             y -= 1
         return y, m
 
+    def _get_current_month_count():
+        """取得當月已用優惠次數。"""
+        disc = _load_discount_dates(today.year, today.month)
+        return len(disc)
+
+    def _update_counter():
+        used = _get_current_month_count()
+        remain = PARKING_DISCOUNT_LIMIT - used
+        color = ft.Colors.GREEN_700 if remain > 3 else ft.Colors.ORANGE_700 if remain > 0 else ft.Colors.RED_700
+        discount_counter.value = f"本月停車優惠：已用 {used}/{PARKING_DISCOUNT_LIMIT} 次，剩餘 {remain} 次"
+        discount_counter.color = color
+
+    def on_day_tap(d_str: str):
+        """點擊日期切換優惠標記。"""
+        d = date.fromisoformat(d_str)
+        disc = _load_discount_dates(d.year, d.month)
+        if d_str in disc:
+            disc.remove(d_str)
+        else:
+            disc.add(d_str)
+        _save_discount_dates(d.year, d.month, disc)
+        _update_counter()
+        render()
+
     def render():
         y1, m1 = _offset_month(today.month, today.year, current_offset[0])
         y2, m2 = _offset_month(today.month, today.year, current_offset[0] + 1)
@@ -384,10 +470,14 @@ def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
         month1_title.value = f"{y1} 年 {m1} 月"
         month2_title.value = f"{y2} 年 {m2} 月"
 
-        g1 = _build_month_grid(y1, m1, date_halls, today)
+        disc1 = _load_discount_dates(y1, m1)
+        disc2 = _load_discount_dates(y2, m2)
+
+        g1 = _build_month_grid(y1, m1, date_halls, today, disc1, on_day_tap)
         month1_grid.controls = g1.controls
-        g2 = _build_month_grid(y2, m2, date_halls, today)
+        g2 = _build_month_grid(y2, m2, date_halls, today, disc2, on_day_tap)
         month2_grid.controls = g2.controls
+        _update_counter()
         page.update()
 
     def prev_month(e):
@@ -405,6 +495,8 @@ def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
         ft.Text("1館", size=11),
         ft.Container(width=20, height=5, bgcolor=HALL2_COLOR, border_radius=1),
         ft.Text("2館", size=11),
+        ft.Container(width=6, height=6, bgcolor=ft.Colors.GREEN_400, border_radius=3),
+        ft.Text("停車優惠", size=11),
     ], spacing=8)
 
     nav_row = ft.Row([
@@ -418,6 +510,8 @@ def build_calendar(events: list[dict], page: ft.Page) -> ft.Card:
             ft.Column([
                 ft.Text("📆 展覽行事曆", size=18, weight=ft.FontWeight.BOLD),
                 ft.Divider(height=1),
+                discount_counter,
+                ft.Text("點擊日期標記停車優惠使用", size=11, color=ft.Colors.GREY_500),
                 legend,
                 nav_row,
                 month1_title,
