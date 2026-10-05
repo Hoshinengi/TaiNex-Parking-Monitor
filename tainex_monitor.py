@@ -2,7 +2,7 @@
 
 import re
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import requests
@@ -83,40 +83,60 @@ def fetch_parking_info() -> dict[str, str]:
     resp = requests.get(PARKING_URL, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-
-    # 整段收費文字
-    body_text = soup.get_text(separator="\n", strip=True)
+    body_text = re.sub(r"\s+", " ", soup.get_text(separator=" ", strip=True))
 
     sections: dict[str, str] = {}
-    # 擷取 1 館與 2 館停車辦法
     for label, pattern in [
-        ("1館", r"(台北南港展覽館1館\s*地下停車場.+?)(?=台北南港展覽館2館|$)"),
-        ("2館", r"(台北南港展覽館2館\s*地下停車場.+?)(?=周邊停車場|南港展覽館1館\s*\n|$)"),
+        ("1館", r"南港1館｜停車收費(.+?)(?=南港2館｜停車收費)"),
+        ("2館", r"南港2館｜停車收費(.+?)(?=繳費方式)"),
     ]:
-        m = re.search(pattern, body_text, re.DOTALL)
+        m = re.search(pattern, body_text)
         if m:
-            sections[label] = re.sub(r"\s+", " ", m.group(1)).strip()
+            sections[label] = m.group(1).strip()
 
     return sections
 
 
 # ── HTML 報告 ──────────────────────────────────────────
 def _extract_rates(text: str) -> dict[str, str]:
-    """從停車費文字中擷取每小時費率數字。"""
     rates: dict[str, str] = {}
-    m = re.search(r"非展覽期間[^：]*：.*?(\d+)分鐘至.*?停車費[^\d]*(\d+)元.*?每增加半小時加收(\d+)元.*?每日[^\d]*(\d+)元", text)
+    m = re.search(r"一般臨停 (\d+) 元／小時 當日最高 (\d+) 元", text)
     if m:
-        rates["非展覽_首小時"] = m.group(2)
-        rates["非展覽_半小時"] = m.group(3)
-        rates["非展覽_每日上限"] = m.group(4)
-    m = re.search(r"展覽期間[^：]*：.*?每小時(\d+)元.*?每增加半小時加收(\d+)元", text)
+        rates["一般_每小時"], rates["一般_每日上限"] = m.groups()
+    m = re.search(r"一般臨停計費.*?每增加半小時加收 (\d+) 元", text)
     if m:
-        rates["展覽_每小時"] = m.group(1)
-        rates["展覽_半小時"] = m.group(2)
-    m = re.search(r"過夜停車費(\d+)元", text)
+        rates["一般_半小時"] = m.group(1)
+    m = re.search(r"展覽期間計費.*?每增加半小時加收 (\d+) 元", text)
+    if m:
+        rates["展覽_半小時"] = m.group(1)
+    m = re.search(r"隔夜停車費 (\d+) 元", text)
     if m:
         rates["過夜"] = m.group(1)
     return rates
+
+
+def _parse_date_ranges(text: str, year: int) -> list[tuple[date, date]]:
+    """解析 '10/1–10/11、10/13' 這類日期字串。"""
+    ranges: list[tuple[date, date]] = []
+    for part in text.split("、"):
+        nums = re.findall(r"(\d{1,2})/(\d{1,2})", part)
+        if nums:
+            (sm, sd), (em, ed) = nums[0], nums[-1]
+            ranges.append((date(year, int(sm), int(sd)), date(year, int(em), int(ed))))
+    return ranges
+
+
+def _find_today_expo_rate(text: str, today: date) -> dict | None:
+    """從「指定展期費率」區塊找出今天適用的展期費率，沒有則回傳 None。"""
+    block = re.search(r"指定展期費率(.+?)逾 22:00", text)
+    if not block:
+        return None
+    pattern = r"([\d/–\-~、]+) (\d+) 元／小時 (無最高上限|當日當次最高 (\d+) 元)"
+    for m in re.finditer(pattern, block.group(1)):
+        for start, end in _parse_date_ranges(m.group(1), today.year):
+            if start <= today <= end:
+                return {"rate": m.group(2), "cap": m.group(4)}
+    return None
 
 
 def _is_expo_today(hall: str, events: list[dict]) -> tuple[bool, list[str]]:
@@ -162,35 +182,36 @@ def generate_html(events: list[dict], parking: dict[str, str]) -> None:
         formatted = re.sub(r"(。)", r"\1<br>", formatted)
         parking_html += f"<h3>🏢 {hall_name}</h3><div class='parking-detail'>{formatted}</div>"
 
-    # 停車費摘要卡片 — 依展覽排程判斷目前適用費率
+    # 停車費摘要卡片 — 依官網「指定展期費率」判斷今日適用費率
     summary_boxes = ""
     for hall_name in ["1館", "2館"]:
         if hall_name not in parking:
             continue
         r = _extract_rates(parking[hall_name])
-        is_expo, expo_names = _is_expo_today(hall_name, events)
+        expo_rate = _find_today_expo_rate(parking[hall_name], date.today())
+        _, expo_names = _is_expo_today(hall_name, events)
         overnight = r.get("過夜", "?")
 
-        if is_expo:
+        if expo_rate:
             period_label = "展覽期間"
             period_color = "#e74c3c"
             period_bg = "#fdecea"
-            price = r.get("展覽_每小時", "?")
+            price = expo_rate["rate"]
             price_unit = "元 / 每小時"
             half_hr = r.get("展覽_半小時", "?")
-            daily_max = "依展覽調整"
-            detail = f"超過1小時每半小時 +{half_hr}元"
-            expo_info = "、".join(expo_names[:3])
+            daily_max = f"{expo_rate['cap']}元" if expo_rate["cap"] else "無上限"
+            detail = f"超過1小時 每半小時 +{half_hr}元"
+            expo_info = "、".join(expo_names[:3]) if expo_names else "今日適用展期費率"
             status_html = f'<div style="margin-top:8px;font-size:13px;color:#c0392b;">📌 進行中: {expo_info}</div>'
         else:
             period_label = "非展覽期間"
             period_color = "#27ae60"
             period_bg = "#eafaf1"
-            price = r.get("非展覽_首小時", "?")
-            price_unit = "元 / 首小時"
-            half_hr = r.get("非展覽_半小時", "?")
-            daily_max = r.get("非展覽_每日上限", "?") + "元"
-            detail = f"超過1小時每半小時 +{half_hr}元"
+            price = r.get("一般_每小時", "?")
+            price_unit = "元 / 每小時"
+            half_hr = r.get("一般_半小時", "?")
+            daily_max = r.get("一般_每日上限", "?") + "元"
+            detail = f"超過1小時 每半小時 +{half_hr}元"
             status_html = '<div style="margin-top:8px;font-size:13px;color:#27ae60;">📌 目前無展覽</div>'
 
         summary_boxes += f"""<div class="summary-box">

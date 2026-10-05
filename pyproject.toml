@@ -1,6 +1,6 @@
 [project]
 name = "tainex-monitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "南港展覽館展覽時程與停車費率查詢"
 requires-python = ">=3.12"
 dependencies = [
